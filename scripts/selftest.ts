@@ -1,6 +1,7 @@
-import { solveAssignment } from '../src/engine/solver'
+import { solveAssignment, computeMatchedTags } from '../src/engine/solver'
 import { runStressTest, stressFingerprint } from '../src/engine/stress'
-import type { AppData } from '../src/types'
+import { enumerateSwaps, applySwapCandidate, type SwapCandidate } from '../src/engine/swap'
+import type { AppData, AssignmentSuccess } from '../src/types'
 
 let pass = 0
 let fail = 0
@@ -270,6 +271,161 @@ const R = (id: string, name: string, capacity: number, tags: string[] = [], conf
     // z 容量为 0 不能承担名额；p1 缺席甲后只有乙可选（available=1，需求1，不缺），真正缺口在 Hall 组层面
     check('p1 剩余可选计数不含容量0者（=1）', p1?.available === 1, JSON.stringify(p1))
   }
+}
+
+/* ============================ 分派互换（一换一） ============================ */
+
+/** 由分派清单构造一个结构合法的 AssignmentSuccess（用于互换引擎的可控输入） */
+function makeSuccess(d: AppData, pairs: Array<[string, string]>): AssignmentSuccess {
+  const assignments = pairs.map(([paperId, reviewerId]) => {
+    const paper = d.papers.find((p) => p.id === paperId)!
+    const reviewer = d.reviewers.find((r) => r.id === reviewerId)!
+    const tags = computeMatchedTags(paper, reviewer)
+    return { paperId, reviewerId, topicMatched: tags.length > 0, matchedTags: tags }
+  })
+  const counts = new Map<string, number>()
+  for (const a of assignments) counts.set(a.reviewerId, (counts.get(a.reviewerId) ?? 0) + 1)
+  const loads = d.reviewers.map((r) => ({ reviewerId: r.id, assigned: counts.get(r.id) ?? 0, capacity: r.capacity }))
+  return {
+    feasible: true,
+    assignments,
+    loads,
+    objective: {
+      topicMatches: assignments.filter((a) => a.topicMatched).length,
+      maxLoad: Math.max(0, ...loads.map((l) => l.assigned)),
+      totalAssigned: assignments.length,
+      totalRequired: assignments.length
+    }
+  }
+}
+
+const findCandidate = (list: SwapCandidate[], a: string, fromA: string, b: string, fromB: string) =>
+  list.find(
+    (c) =>
+      (c.sideA.reviewerId === a && c.sideA.fromPaperId === fromA && c.sideB.reviewerId === b && c.sideB.fromPaperId === fromB) ||
+      (c.sideA.reviewerId === b && c.sideA.fromPaperId === fromB && c.sideB.reviewerId === a && c.sideB.fromPaperId === fromA)
+  )
+
+// 17. 基本枚举 + 确认互换：净增匹配、只更新结果、不改录入数据
+{
+  const d = mk(
+    [P('p1', 'ML', 1, ['ML']), P('p2', '系统', 1, ['SYS'])],
+    [R('a', 'Alice', 2, ['ML']), R('b', 'Bob', 2, ['SYS']), R('c', 'Carol', 2, [])]
+  )
+  // 故意给出“都不匹配”的现状：a 评 p2、c 评 p1；把 p1 还给 a 可 +1
+  const res = makeSuccess(d, [
+    ['p2', 'a'],
+    ['p1', 'c']
+  ])
+  const en = enumerateSwaps(d, res, 'a', 'c')
+  console.log('用例17 互换枚举与应用')
+  check('仅 1 个候选（a 的 p2 × c 的 p1）', en.candidates.length === 1, JSON.stringify(en.candidates.length))
+  const cand = findCandidate(en.candidates, 'a', 'p2', 'c', 'p1')
+  check('候选净增匹配 +1', cand?.deltaMatches === 1, `got ${cand?.deltaMatches}`)
+  const snapshot = JSON.stringify(d)
+  const next = cand ? applySwapCandidate(d, res, cand) : null
+  check('应用后仍可行并标记已人工调整 / swapCount=1', !!next && next.manuallyAdjusted === true && next.swapCount === 1)
+  check('交换后 a 评 p1（匹配）、c 评 p2（不匹配）', !!next && next.assignments.some((x) => x.paperId === 'p1' && x.reviewerId === 'a' && x.topicMatched) && next.assignments.some((x) => x.paperId === 'p2' && x.reviewerId === 'c' && !x.topicMatched))
+  check('总匹配数升到 1、负载统计仍正确（a=1,c=1）', next?.objective.topicMatches === 1 && next.loads.find((l) => l.reviewerId === 'a')?.assigned === 1 && next.loads.find((l) => l.reviewerId === 'c')?.assigned === 1)
+  check('每篇人数仍为 1、无人超容量', !!next && next.assignments.length === 2 && next.loads.every((l) => l.assigned <= l.capacity))
+  check('录入数据完全不变', JSON.stringify(d) === snapshot)
+  check('原结果对象未被原地修改', res.assignments.some((x) => x.paperId === 'p2' && x.reviewerId === 'a'))
+  check('原结果未带人工标记', res.manuallyAdjusted === undefined && res.swapCount === undefined)
+  // 再互换一次：swapCount 累计为 2
+  const en2 = next ? enumerateSwaps(d, next, 'a', 'c') : { candidates: [] as SwapCandidate[] }
+  const back = en2.candidates[0] ? applySwapCandidate(d, next!, en2.candidates[0]) : null
+  check('可再次互换且 swapCount=2、匹配数回落 0', !!back && back.swapCount === 2 && back.objective.topicMatches === 0 && back.manuallyAdjusted === true)
+}
+
+// 18. 排除规则：同稿（组合不变）/ 利益冲突 / 重复承担
+{
+  const d = mk(
+    [P('p1', 'A', 2, ['X']), P('p2', 'B', 2, ['Y'])],
+    [R('a', '甲', 2, ['X']), R('b', '乙', 2, ['Y']), R('c', '丙', 2, [])]
+  )
+  // a 评 p1；b 评 p1、p2；c 评 p2。枚举 a×b：
+  //  - p1(a)×p1(b) 同稿 → samePaper
+  //  - p1(a)×p2(b)：换后 a 评 p2、b 评 p1，但 b 已评 p1 → duplicate
+  const res = makeSuccess(d, [
+    ['p1', 'a'],
+    ['p1', 'b'],
+    ['p2', 'b'],
+    ['p2', 'c']
+  ])
+  const enAB = enumerateSwaps(d, res, 'a', 'b')
+  console.log('用例18 互换排除项')
+  check('同稿与重复承担被排除，无可行候选', enAB.candidates.length === 0)
+  check('同稿计数=1', enAB.excluded.samePaper === 1, `got ${enAB.excluded.samePaper}`)
+  check('重复承担计数=1', enAB.excluded.duplicate === 1, `got ${enAB.excluded.duplicate}`)
+
+  // a×c：a 仅评 p1、c 仅评 p2，唯一交叉对 p1×p2 可行，没有同稿项
+  const enAC = enumerateSwaps(d, res, 'a', 'c')
+  check('a×c 有 1 个可行候选、无同稿/冲突/重复项', enAC.candidates.length === 1 && enAC.excluded.samePaper === 0 && enAC.excluded.duplicate === 0 && enAC.excluded.conflict === 0)
+
+  // 利益冲突：a×b 中令换后 a 评其冲突稿。构造 b 评 p2、a 评 p1，a 对 p2 冲突
+  const d2 = mk(
+    [P('p1', 'A', 1), P('p2', 'B', 1)],
+    [R('a', '甲', 2, [], ['p2']), R('b', '乙', 2)]
+  )
+  const res2 = makeSuccess(d2, [
+    ['p1', 'a'],
+    ['p2', 'b']
+  ])
+  const en2 = enumerateSwaps(d2, res2, 'a', 'b')
+  check('换后触发利益冲突的候选被排除', en2.candidates.length === 0 && en2.excluded.conflict === 1, `conflict=${en2.excluded.conflict}`)
+}
+
+// 19. 排序：按主题匹配净增从高到低
+{
+  const d = mk(
+    [P('p1', '1', 1, ['X']), P('p2', '2', 1, ['Q']), P('p3', '3', 1, ['Z']), P('p4', '4', 1, ['W'])],
+    [R('a', '甲', 4, ['X']), R('b', '乙', 4, ['Z', 'W']), R('c', '丙', 4, [])]
+  )
+  // 现状：a 评 p2（不匹配，标签 Q 无人擅长）、p3（不匹配）；b 评 p1（不匹配）；c 评 p4。
+  // b(p1)×a(p2): a→p1 匹配 X(+1)，b→p2 不匹配(0) ⇒ +1
+  // b(p1)×a(p3): a→p1 匹配 X(+1)，b→p3 匹配 Z(+1) ⇒ +2
+  const res = makeSuccess(d, [
+    ['p2', 'a'],
+    ['p3', 'a'],
+    ['p1', 'b'],
+    ['p4', 'c']
+  ])
+  const en = enumerateSwaps(d, res, 'a', 'b')
+  console.log('用例19 候选按匹配净增排序')
+  check('共 2 个候选', en.candidates.length === 2)
+  check('首位净增 +2、次位 +1（从高到低）', en.candidates[0].deltaMatches === 2 && en.candidates[1].deltaMatches === 1, JSON.stringify(en.candidates.map((c) => c.deltaMatches)))
+  const up = en.candidates[0]
+  check('首位应用后总匹配数 +2（0→2）', applySwapCandidate(d, res, up)?.objective.topicMatches === res.objective.topicMatches + 2)
+}
+
+// 20. 防御性拒绝：违规/过期候选不被应用
+{
+  const d = mk(
+    [P('p1', 'A', 1, ['X']), P('p2', 'B', 1, ['Y'])],
+    [R('a', '甲', 2, ['X'], ['p2']), R('b', '乙', 2, ['Y'])]
+  )
+  const res = makeSuccess(d, [
+    ['p1', 'a'],
+    ['p2', 'b']
+  ])
+  console.log('用例20 违规候选拒绝')
+  // 伪造一个换后让 a 评冲突稿 p2 的候选
+  const bogus: SwapCandidate = {
+    reviewerAId: 'a',
+    reviewerBId: 'b',
+    sideA: { reviewerId: 'a', fromPaperId: 'p1', toPaperId: 'p2', fromMatchedTags: ['X'], toMatchedTags: [], fromMatched: true, toMatched: false },
+    sideB: { reviewerId: 'b', fromPaperId: 'p2', toPaperId: 'p1', fromMatchedTags: ['Y'], toMatchedTags: [], fromMatched: true, toMatched: false },
+    deltaMatches: -2
+  }
+  check('冲突候选 applySwapCandidate 返回 null', applySwapCandidate(d, res, bogus) === null)
+
+  // 过期候选：fromPaper 已不在该评审人名下
+  const staleCand: SwapCandidate = {
+    ...bogus,
+    sideA: { ...bogus.sideA, fromPaperId: 'p2' },
+    sideB: { ...bogus.sideB, fromPaperId: 'p1' }
+  }
+  check('与当前分派不符的过期候选返回 null', applySwapCandidate(d, res, staleCand) === null)
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)

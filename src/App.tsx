@@ -3,6 +3,7 @@ import type { AppData, AssignmentResult, Paper, Reviewer, StressTestReport } fro
 import { loadData, saveData } from './storage'
 import { solveAssignment, evaluateHardConstraints } from './engine/solver'
 import { runStressTest, stressFingerprint } from './engine/stress'
+import { applySwapCandidate, type SwapCandidate } from './engine/swap'
 import { createSampleData } from './sampleData'
 import { buildExportPayload, buildStressExportPayload, downloadJson } from './exporter'
 import { PapersPanel } from './components/PapersPanel'
@@ -96,6 +97,14 @@ export default function App() {
     if (result?.feasible) downloadJson(buildExportPayload(data, result))
   }
 
+  // 确认一次一换一：仅在结果层改派（不改录入数据）。
+  // 成功后结果仍是“成功且未过期”，并被标记为已人工调整；stale 保持 false。
+  const applySwap = (candidate: SwapCandidate) => {
+    if (!result?.feasible || stale) return
+    const next = applySwapCandidate(data, result, candidate)
+    if (next) setResult(next)
+  }
+
   const exportStress = () => {
     if (stressReport) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -159,7 +168,7 @@ export default function App() {
               <p>⏳ 正在浏览器本地进行整数规划求解，请稍候…</p>
             </section>
           ) : (
-            <ResultPanel data={data} result={result} onExport={exportResult} />
+            <ResultPanel data={data} result={result} stale={stale} onExport={exportResult} onApplySwap={applySwap} />
           ))}
         {tab === 'stress' && (
           <StressPanel

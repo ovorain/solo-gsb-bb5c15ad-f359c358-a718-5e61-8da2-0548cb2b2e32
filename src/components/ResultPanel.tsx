@@ -1,9 +1,14 @@
 import type { AppData, AssignmentResult } from '../types'
+import type { SwapCandidate } from '../engine/swap'
+import { SwapTool } from './SwapTool'
 
 interface ResultPanelProps {
   data: AppData
   result: AssignmentResult | null
+  /** 当前结果是否因录入数据变化而已过期（过期时不允许互换） */
+  stale: boolean
   onExport: () => void
+  onApplySwap: (candidate: SwapCandidate) => void
 }
 
 const kindLabel: Record<string, string> = {
@@ -12,7 +17,7 @@ const kindLabel: Record<string, string> = {
   'subset-bottleneck': '组合性瓶颈（局部容量不足）'
 }
 
-export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
+export function ResultPanel({ data, result, stale, onExport, onApplySwap }: ResultPanelProps) {
   if (!result) {
     return (
       <section className="result-empty">
@@ -61,7 +66,14 @@ export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
   return (
     <section>
       <div className="result-banner result-banner--ok">
-        <h2>✓ 分配完成</h2>
+        <h2>
+          ✓ 分配完成
+          {result.manuallyAdjusted && (
+            <span className="manual-badge" title={`已通过「分派互换」人工调整 ${result.swapCount ?? 0} 次；录入数据未改动`}>
+              ✎ 已人工调整
+            </span>
+          )}
+        </h2>
         <div className="stat-row">
           <div className="stat">
             <strong>{totalAssigned}/{totalRequired}</strong>
@@ -80,6 +92,15 @@ export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
           ⬇ 导出结果 JSON
         </button>
       </div>
+
+      {stale ? (
+        <div className="stress-stale-banner">
+          ⚠ 录入数据在生成本结果后已变化，当前分派<strong>可能已过期</strong>。
+          为避免在过期方案上误改派，「分派互换」已暂停；请点击页面顶部「▶ 生成分派」刷新结果后再操作。
+        </div>
+      ) : (
+        <SwapTool data={data} result={result} onApply={onApplySwap} />
+      )}
 
       <h3 className="subhead">逐稿分配明细</h3>
       <div className="card-list">

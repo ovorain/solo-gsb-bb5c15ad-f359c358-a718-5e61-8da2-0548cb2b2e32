@@ -68,6 +68,10 @@ export interface AssignmentSuccess {
     totalAssigned: number
     totalRequired: number
   }
+  /** 是否经过「分派互换」人工调整（重新生成分派后清空） */
+  manuallyAdjusted?: boolean
+  /** 累计执行的一换一互换次数（仅用于展示与导出追溯） */
+  swapCount?: number
 }
 
 export interface AssignmentFailure {

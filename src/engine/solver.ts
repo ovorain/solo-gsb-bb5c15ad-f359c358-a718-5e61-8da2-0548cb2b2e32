@@ -70,6 +70,18 @@ function matchedTagsOf(paper: Paper, reviewer: Reviewer): string[] {
 }
 
 /**
+ * 计算一份（可能未经归一化的）稿件与评审人命中的共同主题标签。
+ * 复用求解器同一套标签归一化（去空白、大小写不敏感、保留稿件侧首次写法），
+ * 供「分派互换」在结果层重算交换后的匹配情况，保证与生成结果口径一致。
+ */
+export function computeMatchedTags(paper: Paper, reviewer: Reviewer): string[] {
+  return matchedTagsOf(
+    { ...paper, tags: normalizeTags(paper.tags) },
+    { ...reviewer, tags: normalizeTags(reviewer.tags) }
+  )
+}
+
+/**
  * 硬约束评估结果。
  * 可行性、不可行原因与归一化后的输入一并返回，供分配主流程与缺席压力测试复用。
  */

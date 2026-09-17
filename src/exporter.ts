@@ -2,6 +2,10 @@ import type { AppData, AssignmentSuccess, StressTestReport } from './types'
 
 export interface ExportPayload {
   exportedAt: string
+  /** 结果是否经过「分派互换」人工调整（未调整时缺省为 false） */
+  manuallyAdjusted: boolean
+  /** 累计执行的一换一互换次数 */
+  swapCount: number
   summary: AssignmentSuccess['objective']
   assignments: Array<{
     paperId: string
@@ -25,6 +29,8 @@ export function buildExportPayload(data: AppData, result: AssignmentSuccess): Ex
   const reviewerMap = new Map(data.reviewers.map((r) => [r.id, r]))
   return {
     exportedAt: new Date().toISOString(),
+    manuallyAdjusted: result.manuallyAdjusted === true,
+    swapCount: result.swapCount ?? 0,
     summary: result.objective,
     assignments: result.assignments.map((a) => ({
       paperId: a.paperId,
