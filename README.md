@@ -21,6 +21,12 @@
     - 全局容量不足（总名额缺口）；
     - 组合性瓶颈：哪一组稿件只能由哪几位评审人承担、缺口多少（Hall 条件违反的紧见证）。
 - **结果展示**：每篇稿件的分配明细与主题匹配标记、评审人负载进度条、匹配/负载统计、本地求解耗时。
+- **分派互换（人工微调）**：在「**分配结果**」页对**成功且未过期**的结果提供「🔀 分派互换」工具。
+  - 选择两位**已有任务**的评审人后，枚举其当前承担稿件之间的全部**一换一**候选（A 的稿件 pA 与 B 的稿件 pB 互换）；
+  - 自动**排除同稿配对**（两人评的是同一篇）以及**交换后组合不变**的配对（对方已承担该稿件，互换会导致稿件少人 / 同一评审人重复承担同一稿件）；
+  - 仅保留交换后**不触发利益冲突、不会让同一评审人重复承担同一稿件、且每篇人数与个人容量仍满足**的候选（一换一天然保持各稿人数与各人负载不变，并另有防御性校验）；
+  - 候选按**主题匹配数变化 Δ 从高到低**展示，每项可预览交换前后的**稿件、命中标签与总匹配数变化**，被排除配对亦可折叠查看原因；
+  - 确认后**只更新当前结果、不改动任何录入数据**，负载统计即时重算保持正确，结果标记为「**已人工调整**」并记录互换审计轨迹；录入数据一旦变化导致结果过期，工具即锁定，重新生成分派后解锁（人工标记同时复位）。
 - **评审人缺席压力测试**：在顶部「**缺席压力测试**」标签页进入。
   - 仅在**当前数据可生成可行方案**时可运行；对每位容量 > 0 的评审人分别模拟**完全缺席**（容量临时置 0），
     使用与生成分派**完全相同的硬约束可行性逻辑**（Dinic 最大流）重新判定，**不改变录入数据或当前分配**。
@@ -78,6 +84,7 @@ npm run preview    # 预览生产构建，访问 http://localhost:4173
 ```jsonc
 {
   "exportedAt": "2026-09-17T08:00:00.000Z",
+  "manuallyAdjusted": false, // 是否经过“分派互换”人工调整
   "summary": {
     "topicMatches": 6,      // 命中主题匹配的分配条数
     "maxLoad": 2,           // 评审人最大负载
@@ -101,6 +108,21 @@ npm run preview    # 预览生产构建，访问 http://localhost:4173
       "assigned": 2,
       "capacity": 2,
       "utilization": 1.0
+    }
+  ],
+  "adjustments": [ // 已确认的一换一明细（未人工调整时为 []）
+    {
+      "at": "2026-09-17T08:05:00.000Z",
+      "removed": [
+        { "reviewerId": "rev_alice", "reviewerName": "Alice（机器学习）", "paperId": "paper_ml_002", "paperTitle": "图神经网络在推荐系统中的应用" },
+        { "reviewerId": "rev_bob", "reviewerName": "Bob（推荐/ML）", "paperId": "paper_sec_001", "paperTitle": "联邦学习中的隐私泄露攻击与防御" }
+      ],
+      "added": [
+        { "reviewerId": "rev_alice", "reviewerName": "Alice（机器学习）", "paperId": "paper_sec_001", "paperTitle": "联邦学习中的隐私泄露攻击与防御" },
+        { "reviewerId": "rev_bob", "reviewerName": "Bob（推荐/ML）", "paperId": "paper_ml_002", "paperTitle": "图神经网络在推荐系统中的应用" }
+      ],
+      "topicMatchesBefore": 4,
+      "topicMatchesAfter": 5
     }
   ]
 }
@@ -162,10 +184,12 @@ npm run preview    # 预览生产构建，访问 http://localhost:4173
 src/
   engine/
     maxflow.ts      # Dinic 最大流：硬约束可行性与瓶颈定位
-    solver.ts       # 主流程 + ILP 建模（javascript-lp-solver）；导出可复用的 evaluateHardConstraints
+    solver.ts       # 主流程 + ILP 建模（javascript-lp-solver）；导出可复用的 evaluateHardConstraints / matchedTagsOf / buildSuccess
     stress.ts       # 评审人缺席压力测试：逐位容量置 0 后复用硬约束判定，输出 Hall 瓶颈诊断与数据指纹
+    swap.ts         # 分派互换：枚举一换一候选（排除同稿/组合不变/冲突）、按匹配变化排序、确认后只改结果并追加人工调整轨迹
   components/
     StressPanel.tsx # 缺席压力测试面板（运行 / 过期提示 / 汇总 / 逐场景明细 / 导出）
+    SwapPanel.tsx   # 分派互换面板（选择两位有任务评审人 / 候选预览 / 确认）
     …               # 录入与结果展示组件
   types.ts          # 数据模型（含压力测试报告类型）
   storage.ts        # localStorage 持久化

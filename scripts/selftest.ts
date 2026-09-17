@@ -1,6 +1,7 @@
-import { solveAssignment } from '../src/engine/solver'
+import { solveAssignment, buildSuccess, matchedTagsOf } from '../src/engine/solver'
 import { runStressTest, stressFingerprint } from '../src/engine/stress'
-import type { AppData } from '../src/types'
+import { applySwap, enumerateSwaps } from '../src/engine/swap'
+import type { AppData, AssignmentItem, AssignmentSuccess } from '../src/types'
 
 let pass = 0
 let fail = 0
@@ -270,6 +271,159 @@ const R = (id: string, name: string, capacity: number, tags: string[] = [], conf
     // z 容量为 0 不能承担名额；p1 缺席甲后只有乙可选（available=1，需求1，不缺），真正缺口在 Hall 组层面
     check('p1 剩余可选计数不含容量0者（=1）', p1?.available === 1, JSON.stringify(p1))
   }
+}
+
+/* ============================ 分派互换 ============================ */
+
+/** 构造一条分派条目（匹配标签按数据现算） */
+const item = (d: AppData, reviewerId: string, paperId: string): AssignmentItem => {
+  const p = d.papers.find((x) => x.id === paperId)!
+  const r = d.reviewers.find((x) => x.id === reviewerId)!
+  const tags = matchedTagsOf(p, r)
+  return { paperId, reviewerId, topicMatched: tags.length > 0, matchedTags: tags }
+}
+
+/** 由显式分派对构造成功结果（模拟引擎输出） */
+const buildResult = (d: AppData, pairs: Array<[string, string]>, totalRequired: number): AssignmentSuccess =>
+  buildSuccess(
+    d.reviewers,
+    pairs.map(([rid, pid]) => item(d, rid, pid)),
+    totalRequired
+  )
+
+/** 结果结构完整性：无重复对、每篇人数、个人容量、统计自洽、无冲突 */
+function isSound(d: AppData, res: AssignmentSuccess): boolean {
+  const seen = new Set<string>()
+  for (const a of res.assignments) {
+    const key = `${a.paperId}|${a.reviewerId}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    const rv = d.reviewers.find((r) => r.id === a.reviewerId)
+    const pp = d.papers.find((p) => p.id === a.paperId)
+    if (!rv || !pp || rv.conflictPaperIds.includes(pp.id)) return false
+  }
+  for (const p of d.papers) {
+    if (res.assignments.filter((a) => a.paperId === p.id).length !== p.reviewsRequired) return false
+  }
+  for (const l of res.loads) {
+    if (l.assigned !== res.assignments.filter((a) => a.reviewerId === l.reviewerId).length) return false
+    if (l.assigned > l.capacity) return false
+  }
+  if (res.objective.totalAssigned !== res.assignments.length) return false
+  if (res.objective.topicMatches !== res.assignments.filter((a) => a.topicMatched).length) return false
+  if (res.objective.maxLoad !== Math.max(0, ...res.loads.map((l) => l.assigned))) return false
+  return true
+}
+
+// 17. 枚举排除：同稿 / 交换后组合不变 / 利益冲突，均不进候选
+{
+  const d = mk(
+    [P('p1', '稿1', 2, ['X']), P('p2', '稿2', 2, ['Y'])],
+    [R('a', '甲', 2, ['X']), R('b', '乙', 2, ['Y']), R('c', '丙', 2, ['X'])]
+  )
+  // 显式分派：p1→甲、丙；p2→甲、乙（甲承担两篇）
+  const res = buildResult(d, [['a', 'p1'], ['c', 'p1'], ['a', 'p2'], ['b', 'p2']], 4)
+  console.log('用例17 互换枚举排除三类')
+  const ac = enumerateSwaps(d, res, 'a', 'c')
+  // (a,p1)⇄(c,p1)：同稿；(a,p2)⇄(c,p1)：甲已评 p1 → 交换后甲重复承担 p1（组合不变）
+  const reasons = new Set(ac.exclusions.map((e) => e.reason))
+  check('a⇄c 无可行候选', ac.candidates.length === 0)
+  check('a⇄c 含 same-paper 与 unchanged-pair', reasons.has('same-paper') && reasons.has('unchanged-pair'), JSON.stringify([...reasons]))
+
+  // 纯同稿：丙与甲都只评 p1
+  const enAB = enumerateSwaps(d, res, 'c', 'b')
+  // (c,p1)⇄(b,p2)：c 未评 p2、b 未评 p1、无冲突 → 合法候选（用于对照，枚举器确实工作）
+  check('对照：丙⇄乙 存在 1 个合法候选', enAB.candidates.length === 1, JSON.stringify(enAB.candidates.map((x) => x.id)))
+
+  // 冲突排除：p3 由甲、丁评审（各需…），乙与 p3 冲突且乙评 p4
+  const d2 = mk(
+    [P('p3', '稿3', 2, ['X']), P('p4', '稿4', 1)],
+    [R('a2', '甲', 2), R('b2', '乙', 1, [], ['p3']), R('e2', '丁', 1)]
+  )
+  const res2 = buildResult(d2, [['a2', 'p3'], ['e2', 'p3'], ['b2', 'p4']], 3)
+  const en = enumerateSwaps(d2, res2, 'b2', 'e2')
+  check('乙(冲突p3)⇄丁：候选被 conflict 排除', en.candidates.length === 0 && en.exclusions.some((e) => e.reason === 'conflict'))
+}
+
+// 18. 可行互换：候选按 Δ 匹配排序；确认后更新结果、标记已人工调整、负载不变、录入不变
+{
+  // p1/p2/p3 都标 X；甲擅长 X（容量2），丙不擅长（容量2）。
+  // 初始：甲评 p1、p3（两条均命中），丙评 p2（不命中）。
+  // 甲⇄丙 的两个候选：甲换去 p2 仍命中 X，丙换来 p1/p3 不命中 → 两条 Δ 均为 0，按 paperA 稳定排序 p1 在前。
+  const d = mk(
+    [P('p1', '稿1', 1, ['X']), P('p2', '稿2', 1, ['X']), P('p3', '稿3', 1, ['X'])],
+    [R('a', '甲', 2, ['X']), R('c', '丙', 2, [])]
+  )
+  const res = buildResult(d, [['a', 'p1'], ['a', 'p3'], ['c', 'p2']], 3)
+  console.log('用例18 可行互换与人工调整标记')
+  check('前置：结果结构自洽', isSound(d, res))
+  const en = enumerateSwaps(d, res, 'a', 'c')
+  check('a⇄c 有 2 个候选且 Δ=0 时 p1 排在前', en.candidates.length === 2 && en.candidates.every((c) => c.deltaMatches === 0) && en.candidates[0].paperA === 'p1')
+
+  // Δ=+1 场景：p1 标 X、p2 无标签；甲擅长 X、丙不擅长。初始甲→p2(无)、丙→p1(无)。
+  const d3 = mk(
+    [P('q1', '稿q1', 1, ['X']), P('q2', '稿q2', 1)],
+    [R('g', '甲', 1, ['X']), R('h', '丙', 1, [])]
+  )
+  const res3 = buildResult(d3, [['h', 'q1'], ['g', 'q2']], 2)
+  check('前置：初始总匹配=0', res3.objective.topicMatches === 0)
+  const en3 = enumerateSwaps(d3, res3, 'g', 'h')
+  check('枚举 1 个候选且 Δ=+1', en3.candidates.length === 1 && en3.candidates[0].deltaMatches === 1)
+  const snapshot = JSON.stringify(d3)
+  const after = applySwap(d3, res3, en3.candidates[0])
+  check('互换返回非空', after !== null)
+  if (after) {
+    check('互换后总匹配=1', after.objective.topicMatches === 1, `got ${after.objective.topicMatches}`)
+    check('互换后分派为 甲→q1(命中)、丙→q2', !!after.assignments.find((x) => x.reviewerId === 'g' && x.paperId === 'q1' && x.topicMatched) && !!after.assignments.find((x) => x.reviewerId === 'h' && x.paperId === 'q2'))
+    check('负载不变（各 1 篇，最大负载 1）', after.loads.every((l) => l.assigned === 1) && after.objective.maxLoad === 1)
+    check('结果标记 manuallyAdjusted', after.manuallyAdjusted === true)
+    check('审计轨迹 1 条，记录前后匹配 0→1', (after.adjustments?.length ?? 0) === 1 && after.adjustments![0].topicMatchesBefore === 0 && after.adjustments![0].topicMatchesAfter === 1)
+    check('互换后结构自洽（人数/容量/无冲突/无重复）', isSound(d3, after))
+    check('录入数据未被修改', JSON.stringify(d3) === snapshot)
+  }
+}
+
+// 19. Δ 排序方向：Δ 高（匹配改善）的候选排在前，Δ 为负的排在后
+{
+  // 三篇各需1：p1 标 X（甲擅长），p2 无标签，p3 标 Z（丁擅长）。
+  // 甲→p1(匹配)，丁→p3(匹配)，丙→p2(无)。构造甲⇄丙、丁⇄丙：
+  //  (甲,p1)⇄(丙,p2): before 1+0=1; after 甲→p2(0)+丙→p1(0)=0 → Δ=-1
+  // 这里再补一对 Δ=+1：乙不擅长任何标签，评 p1；甲评 p2(无)，互换 甲→p1 命中：
+  const d = mk(
+    [P('p1', '稿1', 1, ['X']), P('p2', '稿2', 1), P('p3', '稿3', 1, ['Z'])],
+    [R('a', '甲', 2, ['X']), R('c', '丙', 1, ['Z']), R('b', '乙', 1, [])]
+  )
+  // 甲→p2(无)、丙→p3(命中Z)、乙→p1(无)
+  const res = buildResult(d, [['a', 'p2'], ['c', 'p3'], ['b', 'p1']], 3)
+  // 甲⇄乙：候选 (a,p2)⇄(b,p1)：after a→p1 命中, b→p2 无 → before 0+0=0, after 1+0=1 → Δ=+1
+  const en = enumerateSwaps(d, res, 'a', 'b')
+  check('甲⇄乙 唯一候选 Δ=+1 且排首位', en.candidates.length === 1 && en.candidates[0].deltaMatches === 1)
+  // 甲⇄丙：(a,p2)⇄(c,p3)：a→p3 不命中, c→p2 不命中 → before 0+1=1 after 0 → Δ=-1
+  const en2 = enumerateSwaps(d, res, 'a', 'c')
+  check('甲⇄丙 唯一候选 Δ=-1', en2.candidates.length === 1 && en2.candidates[0].deltaMatches === -1)
+  check('Δ 序列非增（+1 在前、-1 在后的相对次序由分组枚举保证）', en.candidates[0].deltaMatches > en2.candidates[0].deltaMatches)
+  const after = applySwap(d, res, en2.candidates[0])
+  check('Δ=-1 互换后仍结构自洽且已调整', after !== null && isSound(d, after) && after.manuallyAdjusted)
+}
+
+// 20. 互换后不会让同一评审人重复承担同一稿件（unchanged-pair 已在枚举拦截，applySwap 二次防御）
+{
+  const d = mk(
+    [P('p1', '稿1', 2), P('p2', '稿2', 1)],
+    [R('a', '甲', 2), R('b', '乙', 1), R('c', '丙', 1)]
+  )
+  // 甲评 p1,p2；乙评 p1；丙无任务。甲⇄乙的 (甲,p2)⇄(乙,p1)：乙已在 p1、甲已在 p2…
+  // 实际 unchanged：乙已评 p1，若 (甲,p2)⇄(乙,p1) 则 乙→p2、甲→p1，但甲已评 p1 → unchanged-pair
+  const res = buildResult(d, [['a', 'p1'], ['a', 'p2'], ['b', 'p1']], 3)
+  const en = enumerateSwaps(d, res, 'a', 'b')
+  const cond20 = en.candidates.length === 0 && en.exclusions.every((e) => e.reason === 'unchanged-pair' || e.reason === 'same-paper')
+  check('重复承担场景无候选，全部 unchanged-pair/same-paper', cond20)
+  // 无任务评审人不进入选择面：甲⇄丙 枚举为空（丙 0 篇）
+  const en2 = enumerateSwaps(d, res, 'a', 'c')
+  check('无任务评审人之间枚举为空', en2.candidates.length === 0 && en2.exclusions.length === 0)
+  // 重新生成（solveAssignment）得到的结果默认未人工调整
+  const fresh = solveAssignment(d)
+  check('求解器产出结果未带人工调整标记', fresh.feasible && fresh.manuallyAdjusted === false && (fresh.adjustments?.length ?? 0) === 0)
 }
 
 console.log(`\n结果: ${pass} 通过, ${fail} 失败`)

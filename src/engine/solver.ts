@@ -8,7 +8,8 @@ import type {
   InfeasibleReason,
   Paper,
   Reviewer,
-  ReviewerLoad
+  ReviewerLoad,
+  SwapAdjustment
 } from '../types'
 
 /** 标签规范化：去空白、去重，大小写不敏感保留首次写法 */
@@ -55,18 +56,19 @@ function normalize(data: AppData): Normalized {
   return { papers, reviewers }
 }
 
-function hasConflict(paper: Paper, reviewer: Reviewer): boolean {
-  return reviewer.conflictPaperIds.includes(paper.id)
-}
-
 function tagKey(t: string): string {
   return t.toLowerCase()
 }
 
-/** 稿件 i 与评审人 j 命中的共同主题标签 */
-function matchedTagsOf(paper: Paper, reviewer: Reviewer): string[] {
+/** 稿件 i 与评审人 j 命中的共同主题标签（分派互换等模块共用，保证匹配口径唯一） */
+export function matchedTagsOf(paper: Paper, reviewer: Reviewer): string[] {
   const rSet = new Set(reviewer.tags.map(tagKey))
   return paper.tags.filter((t) => rSet.has(tagKey(t)))
+}
+
+/** 无冲突校验（分派互换模块共用） */
+export function hasConflict(paper: Paper, reviewer: Reviewer): boolean {
+  return reviewer.conflictPaperIds.includes(paper.id)
 }
 
 /**
@@ -322,10 +324,15 @@ function parseSolution(
   return assignments.sort((a, b) => a.paperId.localeCompare(b.paperId) || a.reviewerId.localeCompare(b.reviewerId))
 }
 
-function buildSuccess(
+/**
+ * 由分派条目重建成功结果（重算负载与目标统计）。
+ * 分派互换模块在确认人工调整后复用本函数，保证负载统计始终与分派明细一致。
+ */
+export function buildSuccess(
   reviewers: Reviewer[],
   assignments: AssignmentItem[],
-  totalRequired: number
+  totalRequired: number,
+  adjustments: SwapAdjustment[] = []
 ): AssignmentSuccess {
   const counts = new Map<string, number>()
   for (const a of assignments) counts.set(a.reviewerId, (counts.get(a.reviewerId) ?? 0) + 1)
@@ -344,7 +351,9 @@ function buildSuccess(
       maxLoad: Math.max(0, ...loads.map((l) => l.assigned)),
       totalAssigned: assignments.length,
       totalRequired
-    }
+    },
+    manuallyAdjusted: adjustments.length > 0,
+    adjustments
   }
 }
 

@@ -58,6 +58,20 @@ export interface InfeasibleReason {
   deficit?: number
 }
 
+/** 一条已确认的“一换一”人工分派互换（审计轨迹，不改动任何录入数据） */
+export interface SwapAdjustment {
+  /** 确认时间（ISO） */
+  at: string
+  /** 被换下的两条分派 */
+  removed: Array<{ reviewerId: string; paperId: string }>
+  /** 换上的两条分派 */
+  added: Array<{ reviewerId: string; paperId: string }>
+  /** 交换前全局主题匹配数 */
+  topicMatchesBefore: number
+  /** 交换后全局主题匹配数 */
+  topicMatchesAfter: number
+}
+
 export interface AssignmentSuccess {
   feasible: true
   assignments: AssignmentItem[]
@@ -68,6 +82,10 @@ export interface AssignmentSuccess {
     totalAssigned: number
     totalRequired: number
   }
+  /** 是否经过“分派互换”人工调整（重新生成分派后复位为 false） */
+  manuallyAdjusted: boolean
+  /** 已确认的互换明细，按确认顺序追加 */
+  adjustments?: SwapAdjustment[]
 }
 
 export interface AssignmentFailure {

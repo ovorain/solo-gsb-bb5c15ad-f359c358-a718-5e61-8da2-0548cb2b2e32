@@ -1,9 +1,13 @@
-import type { AppData, AssignmentResult } from '../types'
+import type { AppData, AssignmentResult, AssignmentSuccess } from '../types'
+import { SwapPanel } from './SwapPanel'
 
 interface ResultPanelProps {
   data: AppData
   result: AssignmentResult | null
+  /** 结果相对录入数据是否已过期（数据变更后未重新生成） */
+  stale: boolean
   onExport: () => void
+  onApplySwap: (next: AssignmentSuccess) => void
 }
 
 const kindLabel: Record<string, string> = {
@@ -12,7 +16,7 @@ const kindLabel: Record<string, string> = {
   'subset-bottleneck': '组合性瓶颈（局部容量不足）'
 }
 
-export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
+export function ResultPanel({ data, result, stale, onExport, onApplySwap }: ResultPanelProps) {
   if (!result) {
     return (
       <section className="result-empty">
@@ -61,7 +65,15 @@ export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
   return (
     <section>
       <div className="result-banner result-banner--ok">
-        <h2>✓ 分配完成</h2>
+        <h2>
+          ✓ 分配完成
+          {result.manuallyAdjusted && <span className="badge badge-adjusted">已人工调整</span>}
+        </h2>
+        {stale && (
+          <p className="stale-note">
+            ● 录入数据在结果生成后发生变化，以下结果可能已过期；「分派互换」已锁定，重新生成分派即可解锁。
+          </p>
+        )}
         <div className="stat-row">
           <div className="stat">
             <strong>{totalAssigned}/{totalRequired}</strong>
@@ -80,6 +92,8 @@ export function ResultPanel({ data, result, onExport }: ResultPanelProps) {
           ⬇ 导出结果 JSON
         </button>
       </div>
+
+      <SwapPanel data={data} result={result} stale={stale} onApplied={onApplySwap} />
 
       <h3 className="subhead">逐稿分配明细</h3>
       <div className="card-list">

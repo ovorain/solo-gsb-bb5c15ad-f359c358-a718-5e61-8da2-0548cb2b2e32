@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import type { AppData, AssignmentResult, Paper, Reviewer, StressTestReport } from './types'
+import type { AppData, AssignmentResult, AssignmentSuccess, Paper, Reviewer, StressTestReport } from './types'
 import { loadData, saveData } from './storage'
 import { solveAssignment, evaluateHardConstraints } from './engine/solver'
 import { runStressTest, stressFingerprint } from './engine/stress'
@@ -96,6 +96,12 @@ export default function App() {
     if (result?.feasible) downloadJson(buildExportPayload(data, result))
   }
 
+  // 确认分派互换：只替换当前结果（标记“已人工调整”），不触碰录入数据，因此不进入过期态
+  const applySwapAdjustment = (next: AssignmentSuccess) => {
+    setResult(next)
+    setStale(false)
+  }
+
   const exportStress = () => {
     if (stressReport) {
       const stamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)
@@ -159,7 +165,7 @@ export default function App() {
               <p>⏳ 正在浏览器本地进行整数规划求解，请稍候…</p>
             </section>
           ) : (
-            <ResultPanel data={data} result={result} onExport={exportResult} />
+            <ResultPanel data={data} result={result} stale={stale} onExport={exportResult} onApplySwap={applySwapAdjustment} />
           ))}
         {tab === 'stress' && (
           <StressPanel

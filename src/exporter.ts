@@ -2,6 +2,8 @@ import type { AppData, AssignmentSuccess, StressTestReport } from './types'
 
 export interface ExportPayload {
   exportedAt: string
+  /** 是否经过“分派互换”人工调整 */
+  manuallyAdjusted: boolean
   summary: AssignmentSuccess['objective']
   assignments: Array<{
     paperId: string
@@ -18,13 +20,28 @@ export interface ExportPayload {
     capacity: number
     utilization: number
   }>
+  /** 已确认的人工互换明细（未调整时为空数组） */
+  adjustments: Array<{
+    at: string
+    removed: Array<{ reviewerId: string; reviewerName: string; paperId: string; paperTitle: string }>
+    added: Array<{ reviewerId: string; reviewerName: string; paperId: string; paperTitle: string }>
+    topicMatchesBefore: number
+    topicMatchesAfter: number
+  }>
 }
 
 export function buildExportPayload(data: AppData, result: AssignmentSuccess): ExportPayload {
   const paperMap = new Map(data.papers.map((p) => [p.id, p]))
   const reviewerMap = new Map(data.reviewers.map((r) => [r.id, r]))
+  const leg = (x: { reviewerId: string; paperId: string }) => ({
+    reviewerId: x.reviewerId,
+    reviewerName: reviewerMap.get(x.reviewerId)?.name ?? x.reviewerId,
+    paperId: x.paperId,
+    paperTitle: paperMap.get(x.paperId)?.title ?? x.paperId
+  })
   return {
     exportedAt: new Date().toISOString(),
+    manuallyAdjusted: result.manuallyAdjusted,
     summary: result.objective,
     assignments: result.assignments.map((a) => ({
       paperId: a.paperId,
@@ -40,6 +57,13 @@ export function buildExportPayload(data: AppData, result: AssignmentSuccess): Ex
       assigned: l.assigned,
       capacity: l.capacity,
       utilization: l.capacity > 0 ? Number((l.assigned / l.capacity).toFixed(3)) : 0
+    })),
+    adjustments: (result.adjustments ?? []).map((adj) => ({
+      at: adj.at,
+      removed: adj.removed.map(leg),
+      added: adj.added.map(leg),
+      topicMatchesBefore: adj.topicMatchesBefore,
+      topicMatchesAfter: adj.topicMatchesAfter
     }))
   }
 }

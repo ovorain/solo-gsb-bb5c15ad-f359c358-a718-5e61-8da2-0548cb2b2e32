@@ -578,6 +578,184 @@ body {
   border-top: 1px solid var(--border);
 }
 
+/* ---------------- 分派互换 ---------------- */
+.badge-flat {
+  background: rgba(147, 161, 189, 0.16);
+  color: var(--text-dim);
+}
+.badge-adjusted {
+  margin-left: 10px;
+  vertical-align: middle;
+  font-size: 12px;
+  font-weight: 700;
+  padding: 3px 12px;
+  border-radius: 20px;
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+}
+.stale-note {
+  color: var(--amber) !important;
+  font-size: 13px;
+}
+.swap-panel {
+  margin-bottom: 26px;
+  background: var(--panel-2);
+}
+.swap-panel-head h3 {
+  margin: 0 0 6px;
+  font-size: 15.5px;
+}
+.swap-panel-head p {
+  margin: 0 0 12px;
+}
+.swap-disabled {
+  background: rgba(251, 191, 36, 0.1);
+  border: 1px solid rgba(251, 191, 36, 0.5);
+  color: var(--amber);
+  border-radius: 8px;
+  padding: 11px 14px;
+  font-size: 13.5px;
+}
+.swap-pickers {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.swap-picker {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.swap-picker select {
+  min-width: 240px;
+}
+.swap-arrow {
+  font-size: 18px;
+  color: var(--blue);
+  font-weight: 700;
+}
+.swap-hint {
+  color: var(--text-dim);
+  margin: 12px 0 0;
+}
+.swap-hint--warn {
+  color: var(--amber);
+}
+.swap-summary {
+  margin-top: 14px;
+  font-size: 13.5px;
+  color: var(--text-dim);
+}
+.swap-summary strong {
+  color: var(--text);
+}
+.swap-adjusted-chip {
+  margin-left: 10px;
+  font-size: 11.5px;
+  font-weight: 700;
+  padding: 2px 10px;
+  border-radius: 20px;
+  color: var(--amber);
+  background: rgba(251, 191, 36, 0.14);
+  border: 1px solid rgba(251, 191, 36, 0.45);
+}
+.swap-candidate-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 12px;
+}
+.swap-candidate {
+  padding: 12px 14px;
+  background: var(--bg-soft);
+}
+.swap-candidate-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+.swap-confirm {
+  margin-left: auto;
+  padding: 6px 14px;
+}
+.swap-flow {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+}
+.swap-flow-col {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px 12px;
+}
+.swap-flow-label {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+  margin-bottom: 2px;
+}
+.swap-flow-arrow {
+  align-self: center;
+  color: var(--blue);
+  font-size: 18px;
+  font-weight: 700;
+}
+.swap-flow-by {
+  font-size: 12px;
+  margin: 0 0 4px 2px;
+}
+.swap-leg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  border-radius: 6px;
+  padding: 7px 10px;
+  background: var(--bg-soft);
+  border: 1px solid var(--border);
+}
+.swap-leg.is-match {
+  border-left: 3px solid var(--green);
+}
+.swap-leg.is-nomatch {
+  border-left: 3px solid var(--border);
+}
+.swap-leg-paper {
+  font-weight: 600;
+  font-size: 13.5px;
+}
+.swap-leg .mini-tags {
+  flex-basis: 100%;
+}
+.swap-delta {
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.swap-excluded {
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text-dim);
+}
+.swap-excluded summary {
+  cursor: pointer;
+}
+.swap-excluded ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+.swap-excluded li {
+  margin-bottom: 4px;
+}
+
 /* ---------------- 缺席压力测试 ---------------- */
 .stress-actions {
   display: flex;
